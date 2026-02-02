@@ -10,8 +10,6 @@ from pathlib import Path
 from torch import optim
 from torch.optim.lr_scheduler import CosineAnnealingLR, StepLR, ExponentialLR
 from utils import Indexer
-from config_loader import ConfigLoader
-from src.utils.metrics_logger import MetricsLogger
 
 
 def create_optimizer(model, hp_cfg):
@@ -602,16 +600,6 @@ def train_lm(args, train_text, dev_text, vocab_index):
     run_dir.mkdir(parents=True, exist_ok=True)
     print(f"Experiment output directory: {run_dir}")
 
-    # TensorBoard config and MetricsLogger (minimal config)
-    tb_cfg = {'enabled': False, 'predictions_num_samples': 10}
-    metrics_logger = MetricsLogger(
-        config=tb_cfg,
-        experiment_name='part2',
-        task_type='language_modeling',
-        base_dir=Path(__file__).parent,
-        output_dir=run_dir
-    )
-
     # Create model (using relative position attention with custom transformer)
     model = TransformerLMCustom(vocab_size, num_positions, d_model, d_internal, num_layers, num_heads, dropout,
                                 attention_type="relative_position",
@@ -700,9 +688,6 @@ def train_lm(args, train_text, dev_text, vocab_index):
             grad_norm_sum += batch_grad_norm
             num_batches += 1
 
-            # Per-batch logging
-            metrics_logger.log_batch(loss=loss.item(), gradient_norm=batch_grad_norm)
-
             optimizer.step()
 
             total_loss += loss.item() * target_tensor.numel()
@@ -722,17 +707,6 @@ def train_lm(args, train_text, dev_text, vocab_index):
 
         print(f"Epoch {epoch+1}, Loss: {avg_loss:.4f}, Train PPL: {train_perplexity:.2f}, Dev PPL: {dev_perplexity:.2f}, LR: {current_lr:.6f}")
 
-        # Log epoch metrics via MetricsLogger
-        metrics_logger.log_epoch(
-            epoch=epoch + 1,
-            train_loss=avg_loss,
-            train_perplexity=train_perplexity,
-            dev_perplexity=dev_perplexity,
-            gradient_norm=avg_grad_norm,
-            learning_rate=current_lr,
-            elapsed_time=elapsed_time
-        )
-
         # Early stopping check (for perplexity, lower is better)
         if use_early_stopping:
             if dev_perplexity < best_dev_perplexity - min_delta:
@@ -743,40 +717,6 @@ def train_lm(args, train_text, dev_text, vocab_index):
                 if epochs_without_improvement >= patience:
                     print(f"Early stopping triggered after {epoch+1} epochs")
                     break
-
-    # Final inference logging - sample text generations
-    num_samples = tb_cfg.get('predictions_num_samples', 10)
-
-    model.eval()
-    with torch.no_grad():
-        for sample_idx in range(num_samples):
-            # Generate sample text starting from space
-            context = ' '
-            generated = ''
-            for _ in range(50):  # Generate 50 characters
-                indices = [vocab_index.index_of(c) for c in context]
-                # Truncate if context too long
-                if len(indices) > num_positions:
-                    indices = indices[-num_positions:]
-                input_tensor = torch.LongTensor(indices).unsqueeze(0).to(device)
-                log_probs = model(input_tensor)
-                # Sample from distribution
-                probs = torch.exp(log_probs[0, -1, :])
-                next_char_idx = torch.multinomial(probs, 1).item()
-                next_char = vocab_index.get_object(next_char_idx)
-                generated += next_char
-                context += next_char
-
-            metrics_logger.log_inference(
-                predictions=None,
-                input_text=f'Sample {sample_idx}',
-                gold_labels=None,
-                sample_index=sample_idx,
-                generated_text=generated
-            )
-
-    # Close MetricsLogger
-    metrics_logger.close()
 
     model.eval()
     return NeuralLanguageModel(model, vocab_index, device, num_positions)

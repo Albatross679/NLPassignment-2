@@ -11,8 +11,6 @@ from torch.optim.lr_scheduler import CosineAnnealingLR, StepLR, ExponentialLR
 import matplotlib.pyplot as plt
 from typing import List
 from utils import *
-from config_loader import ConfigLoader
-from src.utils.metrics_logger import MetricsLogger
 
 
 def create_optimizer(model, hp_cfg):
@@ -472,16 +470,6 @@ def train_classifier(args, train, dev):
     run_dir.mkdir(parents=True, exist_ok=True)
     print(f"Experiment output directory: {run_dir}")
 
-    # TensorBoard config and MetricsLogger (minimal config)
-    tb_cfg = {'enabled': False, 'attention_maps_num_samples': 4}
-    metrics_logger = MetricsLogger(
-        config=tb_cfg,
-        experiment_name='part1',
-        task_type='classification',
-        base_dir=Path(__file__).parent,
-        output_dir=run_dir
-    )
-
     # Create model (using relative position attention)
     model = Transformer(vocab_size, num_positions, d_model, d_internal, num_classes, num_layers,
                         attention_type="relative_position",
@@ -551,9 +539,6 @@ def train_classifier(args, train, dev):
             grad_norm_sum += batch_grad_norm
             num_batches_processed += 1
 
-            # Per-batch logging
-            metrics_logger.log_batch(loss=loss.item(), gradient_norm=batch_grad_norm)
-
             optimizer.step()
 
             loss_this_epoch += loss.item()
@@ -572,17 +557,6 @@ def train_classifier(args, train, dev):
 
         print(f"Epoch {t+1}, Loss: {avg_loss:.4f}, Train Acc: {train_accuracy:.4f}, Dev Acc: {dev_accuracy:.4f}, LR: {current_lr:.6f}")
 
-        # Log epoch metrics via MetricsLogger
-        metrics_logger.log_epoch(
-            epoch=t + 1,
-            train_loss=avg_loss,
-            train_accuracy=train_accuracy,
-            dev_accuracy=dev_accuracy,
-            gradient_norm=avg_grad_norm,
-            learning_rate=current_lr,
-            elapsed_time=elapsed_time
-        )
-
         # Early stopping check
         if use_early_stopping:
             if dev_accuracy > best_dev_accuracy + min_delta:
@@ -593,29 +567,6 @@ def train_classifier(args, train, dev):
                 if epochs_without_improvement >= patience:
                     print(f"Early stopping triggered after {t+1} epochs")
                     break
-
-    # Final inference logging
-    num_samples = tb_cfg.get('attention_maps_num_samples', 4)
-
-    model.eval()
-    with torch.no_grad():
-        for sample_idx in range(min(num_samples, len(dev))):
-            ex = dev[sample_idx]
-            input_tensor = ex.input_tensor.to(device)
-            log_probs, attn_maps = model.forward(input_tensor)
-            predictions = torch.argmax(log_probs, dim=-1).cpu().numpy()
-
-            metrics_logger.log_inference(
-                attention_maps=attn_maps,
-                log_probs=log_probs,
-                predictions=str(predictions),
-                input_text=ex.input,
-                gold_labels=str(ex.output),
-                sample_index=sample_idx
-            )
-
-    # Close MetricsLogger
-    metrics_logger.close()
 
     # Move model back to CPU for decode function compatibility
     model = model.to('cpu')
