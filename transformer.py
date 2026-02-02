@@ -568,6 +568,9 @@ def train_classifier(args, train, dev):
                     print(f"Early stopping triggered after {t+1} epochs")
                     break
 
+    # Ensure plots directory exists for decode function
+    Path('plots').mkdir(parents=True, exist_ok=True)
+
     # Move model back to CPU for decode function compatibility
     model = model.to('cpu')
     model.eval()
